@@ -5,7 +5,6 @@ import socket
 import urllib.request
 import urllib.parse
 import urllib.error
-from queue import Queue
 import copy
 import json
 
@@ -163,7 +162,6 @@ class BCP(object):
         self.configured = True
 
         self.config = machine.config['bcp']
-        self.receive_queue = Queue()
         self.bcp_events = dict()
         self.connection_config = self.config['connections']
         self.bcp_clients = list()
@@ -216,7 +214,6 @@ class BCP(object):
 
         self.machine.events.add_handler('init_phase_2',
                                         self._setup_bcp_connections)
-        self.machine.clock.schedule_interval(self.get_bcp_messages, 0)
         self.machine.events.add_handler('player_add_success',
                                         self.bcp_player_added)
         self.machine.events.add_handler('machine_reset_phase_1',
@@ -340,7 +337,7 @@ class BCP(object):
 
             self.bcp_clients.append(BCPClientSocket(self.machine, name,
                                                     settings,
-                                                    self.receive_queue))
+                                                    self))
 
         self._send_machine_vars()
 
@@ -488,24 +485,20 @@ class BCP(object):
         if callback:
             callback()
 
-    def get_bcp_messages(self, dt):
-        """Retrieve and process new BCP messages from the receiving queue."""
-        del dt
+    def process_bcp_message(self, cmd, kwargs, rawbytes):
+        """Process BCP message.
 
-        while not self.receive_queue.empty():
+        Args:
+            cmd:
+            kwargs:
+            rawbytes:
+        """
+        self.log.debug("Processing command: %s %s", cmd, kwargs)
 
-            cmd, kwargs, rawbytes = self.receive_queue.get(False)
-
-            self.log.debug("Processing command: %s %s", cmd, kwargs)
-
-            if cmd in self.bcp_receive_commands:
-                # print(kwargs.keys())
-                self.bcp_receive_commands[cmd](rawbytes=rawbytes, **kwargs)
-            else:
-                # self.log.warning("Received invalid BCP command: %s", cmd)
-                # self.send('error', message='invalid command',
-                #           command=cmd)
-                pass
+        if cmd in self.bcp_receive_commands:
+            self.bcp_receive_commands[cmd](rawbytes=rawbytes, **kwargs)
+        else:
+            self.log.warning("Received invalid BCP command: %s", cmd)
 
     def shutdown(self):
         """Prepare the BCP clients for MPF shutdown."""
@@ -711,18 +704,17 @@ class BCPClientSocket(object):
         machine: The main MachineController object.
         name: String name this client.
         config: A dictionary containing the configuration for this client.
-        receive_queue: The shared Queue() object that holds incoming BCP
-            messages.
+        bcp: The bcp object.
     """
 
-    def __init__(self, machine, name, config, receive_queue):
+    def __init__(self, machine, name, config, bcp):
         """Initialise BCP client socket."""
         self.log = logging.getLogger('BCPClientSocket.' + name)
         self.log.debug('Setting up BCP Client...')
 
         self.machine = machine
         self.name = name
-        self.receive_queue = receive_queue
+        self.bcp = bcp
 
         self.config = self.machine.config_validator.validate_config(
             'bcp:connections', config, 'bcp:connections')
@@ -828,7 +820,7 @@ class BCPClientSocket(object):
         if cmd in self.bcp_client_socket_commands:
             self.bcp_client_socket_commands[cmd](**kwargs)
         else:
-            self.receive_queue.put((cmd, kwargs, rawbytes))
+            self.bcp.process_bcp_message(cmd, kwargs, rawbytes)
 
     def receive_hello(self, **kwargs):
         """Process incoming BCP 'hello' command."""
