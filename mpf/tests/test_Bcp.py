@@ -150,5 +150,12 @@ class TestBcp(MpfTestCase):
             call("ball_started", ball=17, player=23),
             call("ball_started", ball='17', player='23')
         ])
+        mc.events.post.reset_mock()
+
+        self.machine.events.post('ball_ended')
+        self.machine_run()
+        mc.events.post.assert_has_calls([
+            call("ball_ended")
+        ])
 
         self.module_patcher.stop()
